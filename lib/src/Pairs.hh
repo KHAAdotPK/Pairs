@@ -47,6 +47,22 @@ class Pairs
         _is_open = true; 
     }
 
+    /*
+     * Build lines using a doubly-linked list of lines and tokens.
+     * 
+     * NOTE:
+     * This method is deprecated/replaced by Parser::build_lines_table().
+     * 
+     * DESIGN DRAWBACKS (Why this is replaced):
+     * - Requires O(N_lines + N_tokens) separate heap allocations, causing heap fragmentation.
+     * - High memory overhead due to next/prev pointers in LINES_NEW and TOKEN_NEW.
+     * - Poor CPU cache locality since list nodes are not guaranteed to be contiguous in memory,
+     *   leading to frequent cache misses during iterations.
+     * 
+     * @param parser Reference to the Parser object.
+     * @param hash_table The vocabulary hash table.
+     * @return Head pointer of the doubly-linked list of lines.
+     */
     LINES_NEW* build_lines(Parser& parser, const WordRecord_new* const *const hash_table)
     {
         size_t key = 0, probe = 0;
