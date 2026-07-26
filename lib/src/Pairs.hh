@@ -552,6 +552,49 @@ class Pairs
     { 
         return _ifile_name;
     }
-
 };
+
+/*
+ * =========================================================================
+ * DESIGN SHORTCOMINGS & PERFORMANCE OPTIMIZATION PATHS
+ * =========================================================================
+ * 
+ * While the current implementation of `Pairs` building works correctly, there 
+ * are several low-level performance bottlenecks and structural shortcomings 
+ * that can be optimized to improve performance on large datasets.
+ * 
+ * 1. HEAP FRAGMENTATION FROM NESTED DYNAMIC ALLOCATIONS:
+ *    - In `build_pairs()`, the code performs multiple allocations per token:
+ *        - `new ContextPair()`
+ *        - `new size_t[CONTEXT_WINDOW_SIZE]` (for left_context_keys)
+ *        - `new size_t[CONTEXT_WINDOW_SIZE]` (for right_context_keys)
+ *    - For a large corpus with millions of tokens, this leads to millions of 
+ *      tiny allocations. This causes significant heap overhead, allocator lock 
+ *      contention, and heap fragmentation.
+ *    - **Optimization**: Flatten the memory layout. Allocate a single contiguous 
+ *      block of memory for all left and right context keys of the entire corpus 
+ *      (or line), and have pointers/offsets indexing into this giant pre-allocated 
+ *      buffer.
+ * 
+ * 2. CPU CACHE LOCALITY ISSUES (POINTER CHASING):
+ *    - `ContextPairs**` and `ContextPair**` store pointers to structures. Because 
+ *      these structures are allocated independently on the heap, they are scattered 
+ *      across memory. 
+ *    - When iterating through pairs during training, the CPU has to "chase" pointers, 
+ *      leading to L1/L2 cache misses.
+ *    - **Optimization**: Migrate from arrays of pointers (e.g. `ContextPair**`) to 
+ *      contiguous vectors/arrays of structures (e.g. `ContextPair*` array), or 
+ *      preferably a fully-flat struct-of-arrays (SoA) design which is also highly 
+ *      conducive to direct copying to GPU memory.
+ * 
+ * 3. EXPLICIT ERROR HANDLING & bad_alloc RECOVERY:
+ *    - Using `try/catch` around every allocation provides safe failure logging, but 
+ *      fails to perform cleanup of previously allocated lines/pairs on bad_alloc.
+ *      If memory allocation fails mid-way, the already-allocated contexts will leak.
+ *    - **Optimization**: Implement a custom RAII resource manager or destructor that 
+ *      can clean up partially built structures on exception, or use smart pointers 
+ *      like `std::unique_ptr` where appropriate (though raw buffers are often preferred 
+ *      in high-performance GPU pipelines, in which case a single giant contiguous allocation 
+ *      solves both issues).
+ */
 #endif // CSV_PAIRS_LIB_PAIRS_HH
