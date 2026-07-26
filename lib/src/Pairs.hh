@@ -159,7 +159,313 @@ class Pairs
         }                            
 
         return lines_head;;
-    }    
+    }
+
+    /*
+     * Build target-context word pairs from the given line array.
+     * 
+     * =========================================================================
+     * PADDING & CONTEXT HANDLING DESIGN
+     * =========================================================================
+     * 
+     * 1. THE HASH KEY INDEX PROBLEM & PAIRS_PADDING_KEY:
+     *    During parsing, tokens are hashed into a vocabulary hash table of size 
+     *    `bucket_count`. A token's hash index (key) is generated using modulo 
+     *    arithmetic, which means '0' is a completely valid and occupied index in 
+     *    the hash table. 
+     *    Consequently, we CANNOT use '0' to denote out-of-bounds/padding slots for 
+     *    context words at the beginning or end of lines. Doing so would conflate 
+     *    padding with whatever vocabulary word happens to hash to index 0.
+     *    
+     *    To solve this, we pad out-of-bounds context slots with `PAIRS_PADDING_KEY` 
+     *    which is defined as `((size_t)-1)` (the maximum value of `size_t`). This is 
+     *    guaranteed to never conflict with any valid hash table index.
+     * 
+     * 2. THE TRANSLATION LAYER (HASH INDEX -> WORD ID):
+     *    Downstream training loops (especially on the GPU/CUDA) require contiguous, 
+     *    compact token identifiers (Word IDs) ranging from 1 to V (vocabulary size) 
+     *    rather than sparse, scattered hash indices.
+     *    
+     *    Therefore, before training, these pairs undergo a translation phase where:
+     *      - Any valid hash index is mapped to its unique 1-based `word_id` 
+     *        (via `WordRecord->get_word_id()`).
+     *      - The `PAIRS_PADDING_KEY` sentinel is safely mapped to `0`.
+     * 
+     * 3. WHY WORD ID ORIGINS AT 1 & GPU EMBEDDING ZERO-PADDING:
+     *    Because `word_id`s originate at 1 (using `TOKEN_ID_ORIGINATE_AT_VALUE = 1`), 
+     *    index `0` is completely free to serve as the official padding token ID.
+     *    
+     *    In GPU embedding layers, index `0` is assigned a "0-vectored" embedding row 
+     *    (all weights in this embedding row are initialized and kept at 0.0). 
+     *    This allows the GPU to run branchless lookups: we don't need conditional 
+     *    branching (`if (id != pad)`) to mask out padding tokens. The GPU can blindly 
+     *    fetch and accumulate embedding vectors for all tokens (including padding), 
+     *    and the zero-vector at index 0 will naturally add nothing to the projection, 
+     *    avoiding warp divergence and ensuring optimal execution speed.
+     * 
+     * @param parser Reference to the Parser object.
+     * @param lines_array Contiguous array of WORDS pointers containing line token keys.
+     * @return Array of pointers to ContextPairs for each line.
+     */
+    ContextPairs** build_pairs(Parser& parser, WORDS** lines_array)
+    {
+        /*
+            Pointer to array of pointers to ContextPairs structures
+            Each instance of ContextPairs structure has internal array which holds the instances of struct ContextPair             
+         */
+        struct ContextPairs** contexts = nullptr;
+
+        try
+        {
+            contexts = new ContextPairs*[parser.get_nol()];            
+        }
+        catch (const std::bad_alloc& e)
+        {
+            throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for contexts.");
+        }
+        
+        for (size_t i = 0; i < parser.get_nol(); i++)
+        {            
+            // This pointer will hold all context pairs of single line
+            struct ContextPairs* context = nullptr;
+
+            // Pointer to current line's word hash keys
+            WORDS* line = lines_array[i];
+            
+            try
+            {
+                context = new ContextPairs();
+            }
+            catch (const std::bad_alloc& e)
+            {
+                throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for context_pairs of single line.");
+            }
+
+            context->n = lines_array[i]->n;
+
+            try
+            {
+                /*
+                    Number of pairs = number of tokens
+                 */
+                context->pairs = new ContextPair*[context->n];
+            }
+            catch (const std::bad_alloc& e)
+            {
+                throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for context_pairs array of single line.");
+            }
+            
+            // Add the context of single line to the array of contexts
+            contexts[i] = context;
+
+            // Iterate over all tokens in the current line
+            for (size_t j = 0; j < context->n; j++)
+            {
+                // This pointer will hold context pair for single token
+                struct ContextPair* pair = nullptr;
+
+                try
+                {
+                    pair = new ContextPair();
+
+                    // Add the context pair for single token to the array of context pairs
+                    context->pairs[j] = pair;
+                }
+                catch (const std::bad_alloc& e)
+                {
+                    throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for context pair of single token.");
+                }
+                
+                try
+                {
+                    pair->left_context_keys = new size_t[CONTEXT_WINDOW_SIZE];
+                    pair->right_context_keys = new size_t[CONTEXT_WINDOW_SIZE];
+                }
+                catch (const std::bad_alloc& e)
+                {
+                    throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for left/right context arrays of single token.");
+                }
+                
+                pair->target_key = line->keys[j]; // Set the key for the target/center token
+
+                /*for (size_t k = CONTEXT_WINDOW_SIZE - 1; k >= 0; k--)
+                {                    
+                    if (k < j)
+                    {                    
+                        //pair->left_context_keys[k] = line->keys[j - k];
+                    }
+                    else
+                    {
+                        //pair->left_context_keys[k] = 0;                        
+                    }                    
+                }*/
+
+                /*
+                    pair->target_key = target_token->key; // Set target key in pair
+ 
+                    for (size_t j = 0; j < CONTEXT_WINDOW_SIZE && target_token->prev != nullptr; j++)
+                    {
+                        pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - j] = target_token->prev->key;
+                        target_token = target_token->prev;
+                }
+
+                */
+
+                // Left Context Keys
+                /*
+                    How this loop works:
+                        - We want to fill the left_context_keys array from right to left with the keys of the tokens to the left of the target/center token
+                        - The first element of the left_context_keys array will be the key of the first token/word to the left of the target/center token
+                        - The second element of the left_context_keys array will be the key of the token/word to the left of the token/word to the left of the target/center token
+                        - And so 
+                        
+                    Out-of-bounds/padding indices are set to PAIRS_PADDING_KEY ((size_t)-1) because 0 is a valid hash key index.
+                    - WARNING: Downstream CPU/GPU code must check for PADDING_KEY before accessing 
+                      arrays or embedding tables to prevent Out-of-Bounds crashes    
+                 */
+                for (size_t k = 0; k < CONTEXT_WINDOW_SIZE; k++)
+                {
+                    if (k < j)
+                    {
+                        pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - k] = line->keys[j - k - 1];
+                    }
+                    else
+                    {
+                        pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - k] = PAIRS_PADDING_KEY; // 0 is a valid hash key index
+                    }
+                }
+
+                // Right Context Keys
+                /*
+                    How this loop works:
+                        - We want to fill the right_context_keys array from left to right with the keys of the tokens to the right of the target/center token
+                        - The first element of the right_context_keys array will be the key of the first token/word to the right of the target/center token
+                        - The second element of the right_context_keys array will be the key of the token/word to the right of the token/word to the right of the target/center token
+                        - And so on
+
+                    Out-of-bounds/padding indices are set to PAIRS_PADDING_KEY ((size_t)-1) because 0 is a valid hash key index.
+                    - WARNING: Downstream CPU/GPU code must check for PADDING_KEY before accessing 
+                      arrays or embedding tables to prevent Out-of-Bounds crashes       
+                 */
+                for (size_t k = 0; k < CONTEXT_WINDOW_SIZE; k++)
+                {
+                    if ((j + k + 1) < context->n)
+                    {
+                        pair->right_context_keys[k] = line->keys[j + k + 1];
+                    }
+                    else
+                    {
+                        pair->right_context_keys[k] = PAIRS_PADDING_KEY; // 0 is a valid hash key index
+                    }
+                }
+                
+                /*size_t k = CONTEXT_WINDOW_SIZE - 1;
+                while (1)
+                {                    
+                    if (k < (j - 1))
+                    {
+                        pair->left_context_keys[k] = line->keys[j - k - 1];
+                    }
+                    else
+                    {
+                        pair->left_context_keys[k] = 0;
+                    }
+
+                    if (k == 0)
+                    {
+                        break;
+                    }
+
+                    k--;
+                }*/
+            }
+        }
+        
+        return contexts;
+    }
+    
+    void build_pairs_old(Parser& parser, WORDS** lines_array)
+    {
+        /*for (size_t i = 0; i < parser.get_nol(); i++)
+        {
+            WORDS* ptr = lines_array[i];
+
+            std::cout<< "n = " << ptr->n << ", ";
+
+            for (size_t j = 0; j < ptr->n; j++)
+            {
+                std::cout<< ptr->keys[j] << " ";
+            }
+            std::cout<< std::endl;
+        }*/
+       
+        /*
+            Pointer to array of pointers to ContextPairs structures
+            Each instance of ContextPairs structure has internal array which holds the instances of struct ContextPair             
+         */
+        struct ContextPairs** contexts = nullptr;
+        try
+        {
+            contexts = new ContextPairs*[parser.get_nol()];
+        }
+        catch (const std::bad_alloc& e)
+        {
+            throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for contexts.");
+        }
+                
+        for (size_t i = 0; i < parser.get_nol(); i++)
+        {
+            WORDS* line = lines_array[i];
+
+            // Number of context pairs in one line is equal to the number of tokens in the line
+            //contexts[i]->n = line->n;
+
+            std::cout<< "Hello World\n";
+
+            for (size_t j = 0; j < line->n; j++)
+            {
+                struct ContextPair* pair = nullptr;
+                try
+                {
+                    pair = new ContextPair();
+                }
+                catch (const std::bad_alloc& e)
+                {
+                    throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for pair.");
+                }
+
+                try 
+                {
+                    pair->left_context_keys = new size_t[CONTEXT_WINDOW_SIZE]();
+                    pair->right_context_keys = new size_t[CONTEXT_WINDOW_SIZE]();
+                }
+                catch (const std::bad_alloc& e)
+                {
+                    throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for context pair keys.");
+                }
+
+                contexts[i]->pairs[j] = pair; // Store the pointer to the pair in the array of pairs
+
+                pair->target_key = line->keys[j]; // Set target key in pair     
+                
+                // Left context keys
+                for (size_t k = CONTEXT_WINDOW_SIZE - 1; k >= 0 && j > 0; k--)
+                {
+                    std::cout<< k << ", ";
+
+                    /*if (k <= (j - 1))
+                    {
+                        pair->left_context_keys[k] = line->keys[j - k - 1];  
+                    }*/
+                    /*else
+                    {
+                        pair->left_context_keys[k] = 0; // Padding for out of bounds
+                    }*/
+                }
+                std::cout<< std::endl;
+            }
+        }
+    }
 
     struct ContextPairs** build_pairs(Parser& parser, const LINES_NEW* const lines, const WordRecord_new* const *const hash_table)
     {
