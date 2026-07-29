@@ -7,28 +7,68 @@
 
 ## What Is This Package
 
-`Pairs` generates every training example that the Skip-gram model will ever consume,
-in a single pass over a pre-built vocabulary table, before training begins.
+`Pairs` is currently a transitional package that contains multiple ways of turning
+parsed token sequences into Skip-gram-style context structures. In the current code,
+`lib/src/Pairs.hh` builds `ContextPairs` / `ContextPair` objects from parser-produced
+`WORDS` arrays, while older and debugging-oriented helpers remain in the same header
+for comparison and validation.
 
-A Skip-gram training example is exactly one pair:
+In the current code, a training example is represented as a target token plus a
+fixed-size left/right context window rather than as a single flat pair object.
+Each `ContextPair` stores:
 
+- one target value,
+- a left-context array,
+- a right-context array.
+
+For a sentence such as `"the cat sat on the mat"` with a context window of size 2,
+the center token `"sat"` is associated with a context window that includes the nearby
+words to the left and right. In the newer overload, those values are translated to
+compact `word_id` values before they are stored, so the resulting data is suitable
+for direct embedding lookups. In the older/debugging overloads, the code still works
+with raw key-based values and padding behavior instead of a fully flattened pair list.
+
+The data is still integer-based and does not require strings, one-hot vectors, or
+re-reading the corpus during training.
+
+---
+
+## Current Implementation Shape
+
+The implementation in this repository is not yet a single clean pipeline. The relevant
+entry points are:
+
+- `build_pairs(Parser&, WORDS**, WordRecord_new** hash_table)` builds a per-line
+  `ContextPairs` object from `WORDS** lines_array`. In this overload, the target token
+  is resolved through the vocabulary hash table and converted to a compact `word_id`,
+  while the left/right context arrays are filled with context `word_id` values.
+  Padding is written as `0` in the current code path.
+- `build_pairs(Parser&, WORDS**)` is a debugging-oriented overload that preserves the
+  raw token keys from the line arrays and uses `PAIRS_PADDING_KEY` for padding in the
+  comments and logic.
+- `build_pairs_older(Parser&, WORDS**)` and `build_pairs_old(Parser&, const LINES_NEW* const, const WordRecord_new* const *const hash_table)`
+  are older or experimental helpers that walk either a simple line-array view or the
+  older linked-list representation built from `LINES_NEW` / `TOKEN_NEW`.
+
+The data structures that these builders use are defined in `lib/src/ContextPairs.hh`:
+
+```cpp
+struct ContextPair
+{
+    size_t* left_context_keys;
+    size_t* right_context_keys;
+    size_t  target_key;
+};
+
+struct ContextPairs
+{
+    size_t       n;
+    ContextPair** pairs;
+};
 ```
-(center_word_id, context_word_id)
-```
 
-For the sentence `"the cat sat on the mat"` with a context window of size 2,
-the center word `"sat"` produces four training pairs:
-
-```
-(sat, the)    ← 2 positions to the left
-(sat, cat)    ← 1 position to the left
-(sat, on)     ← 1 position to the right
-(sat, the)    ← 2 positions to the right
-```
-
-Both values in each pair are `size_t` vocabulary indices — direct row indices into
-the embedding matrix `E` of shape `[vocab_size × d_model]`. No strings. No one-hot
-vectors. No corpus re-reading.
+This is a lightweight container layer for holding one target token plus a fixed-size
+context window per token, rather than the older `CONTEXTWORDS`-style layout.
 
 ---
 
@@ -38,22 +78,22 @@ vectors. No corpus re-reading.
 corpus file
     │
     ▼
-Parser::build_hash_table()          ← one pass, builds TABLES
+Parser::build_lines_table()       ← one pass, builds the parser line-table structure
     │
     ▼
-TABLES                              ← vocabulary + corpus layout, fully in memory
-    ├── hash_to_word_record[]       ← token string → WordRecord (word_id, occurrences)
-    ├── word_id_to_hash[]           ← word_id → bucket index
-    └── lines → LINE → TOKEN        ← full corpus in order, token_ids pre-assigned
+Parser output / line tables       ← vocabulary records plus contiguous line-token arrays
+    ├── hash_table[]                ← WordRecord_new buckets for token lookup
+    ├── WordRecord_new::word_id     ← compact integer id attached to each token record
+    └── lines → WORDS[]             ← contiguous per-line arrays of token keys
     │
     ▼
-Pairs(TABLES*)                      ← this package, reads TABLES, emits pairs
+Pairs overloads                    ← this package builds ContextPairs from line arrays
     │
     ▼
-WORDPAIRS linked list               ← the training dataset
+ContextPairs / ContextPair         ← per-token context windows with left/right arrays
     │
     ▼
-Skip-gram training loop             ← consumes pairs, updates E via backprop
+Downstream training consumer       ← intended consumer of the built context structure
 ```
 
 ---
@@ -355,6 +395,32 @@ loss  = cross_entropy(score, label)      // label=1 for positive pair
 ```
 
 `vocab_size` never appears in any hot path.
+
+---
+
+## Reserved First Entry in the Word-Vector Table
+
+The first entry in the word-vector / embedding table is reserved for padding.
+In this design it is not treated as a real vocabulary token. Instead, it is assigned
+word id `0` and initialized as a zero vector.
+
+This is useful for both CPU and GPU execution:
+
+- padding tokens can be looked up without special branching,
+- the lookup naturally contributes nothing to the computation,
+- and the first real vocabulary item can begin at index `1`.
+
+So the table is conceptually:
+
+```text
+index 0  → padding / zero vector
+index 1  → first real word
+index 2  → second real word
+...
+```
+
+This keeps the training path simple and avoids needing a separate mask for padded
+context positions.
 
 ---
 
