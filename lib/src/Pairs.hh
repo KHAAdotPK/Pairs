@@ -1,6 +1,9 @@
 /*
     lib/src/Pairs.hh
-    Q@hackers.pk
+    
+    Declaration of the Pairs class, which is responsible for reading and processing pairs of words from a file.
+
+    Maintainer: Sohail.
  */
 
 #ifndef CSV_PAIRS_LIB_PAIRS_HH 
@@ -345,7 +348,8 @@ class Pairs
                     }
                     else
                     {
-                        pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - k] = 0; // Set to 0 for padding, as 0 is a valid hash key index. Downstream code should handle this appropriately.
+                        pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - k] = /*0*/ PAIRS_PADDING_KEY; // Set to 0 for padding, as 0 is a valid hash key index. Downstream code should handle this appropriately.
+                                                                                  // This should not be hard coded to 0, but rather use a defined constant for padding, e.g., PAIRS_PADDING_KEY.
 
                         //pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - k] = PAIRS_PADDING_KEY; // 0 is a valid hash key index
                     }
@@ -374,7 +378,8 @@ class Pairs
                     }
                     else
                     {
-                        pair->right_context_keys[k] = 0; // Set to 0 for padding, as 0 is a valid hash key index. Downstream code should handle this appropriately.
+                        pair->right_context_keys[k] = /*0*/ PAIRS_PADDING_KEY; // Set to 0 for padding, as 0 is a valid hash key index. Downstream code should handle this appropriately.
+                                                         // This should not be hard coded to 0, but rather use a defined constant for padding, e.g., PAIRS_PADDING_KEY.
 
                         //pair->right_context_keys[k] = PAIRS_PADDING_KEY; // 0 is a valid hash key index
                     }

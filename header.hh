@@ -1,6 +1,17 @@
 /*
- * header.hh
- * Q@hackers.pk
+    lib/Pairs/header.hh
+
+    This header file serves as a central inclusion point for all necessary
+    headers related to the Pairs class and its dependencies. It includes
+    the Serialisation header from the Corpus library, which defines the
+    structures and functions needed for reading and writing corpus data,
+    as well as the Pairs header itself, which defines the Pairs class.
+    
+    By including this header in source files that need to use the Pairs class,
+    we ensure that all necessary declarations and definitions are available
+    without needing to include multiple headers separately.
+
+    Maintainer: Sohail.
  */
 
 #ifndef PAIRS_HEADER_HH
@@ -31,7 +42,20 @@
  *   allowing branchless embedding lookups without warp divergence.
  */
 #ifndef PAIRS_PADDING_KEY
-#define PAIRS_PADDING_KEY ((size_t)-1) 
+#define PAIRS_PADDING_KEY 0
+/*
+    This macro is intentionally left commented out because the current
+    implementation uses compact word IDs for the left/right context arrays.
+
+    In an earlier design, raw hash keys were stored in those arrays, and 0 was
+    a valid hash-key value, so a distinct sentinel was needed. That earlier
+    sentinel was defined as:
+
+        #define PAIRS_PADDING_KEY ((size_t)-1)
+
+    In the present design, the padding value is represented by 0 instead.
+ */
+//#define PAIRS_PADDING_KEY ((size_t)-1) // Sentinel used by the earlier hash-key-based design
 #endif
 
 /*
