@@ -289,8 +289,8 @@ class Pairs
                 
                 try
                 {
-                    pair->left_context_keys = new size_t[CONTEXT_WINDOW_SIZE];
-                    pair->right_context_keys = new size_t[CONTEXT_WINDOW_SIZE];
+                    pair->left_context_ids = new size_t[CONTEXT_WINDOW_SIZE];
+                    pair->right_context_ids = new size_t[CONTEXT_WINDOW_SIZE];
                 }
                 catch (const std::bad_alloc& e)
                 {
@@ -299,7 +299,11 @@ class Pairs
                 
                 //pair->target_key = line->keys[j]; // Set the key for the target/center token
 
-                pair->target_key = hash_table[line->keys[j]]->get_word_id(); // Translate hash key to compact word ID for training
+#ifndef MAX_VOCAB_SIZE                
+                pair->target_id = hash_table[line->keys[j]]->get_word_id(); // Translate hash key to compact word ID for training
+#else
+                pair->target_id = (hash_table[line->keys[j]]->get_word_id() <= MAX_VOCAB_SIZE) ? hash_table[line->keys[j]]->get_word_id() : PARSER_UNKNOWN_VALUE;
+#endif                
 
                 /*for (size_t k = CONTEXT_WINDOW_SIZE - 1; k >= 0; k--)
                 {                    
@@ -341,17 +345,27 @@ class Pairs
                     if (k < j)
                     {
                         size_t key = line->keys[j - k - 1];
-                        pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - k] = hash_table[key]->get_word_id();
-
-
-                        //pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - k] = line->keys[j - k - 1];
+                        size_t word_id = hash_table[key]->get_word_id(); // Translate hash key to compact word ID for training
+#ifndef  MAX_VOCAB_SIZE                                               
+                        pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - k] = word_id; 
+#else                   
+                        if (word_id <= MAX_VOCAB_SIZE) // Ensure the word ID is within the valid range
+                        {
+                            pair->left_context_ids[CONTEXT_WINDOW_SIZE - 1 - k] = word_id; 
+                        }
+                        else
+                        {
+                            pair->left_context_ids[CONTEXT_WINDOW_SIZE - 1 - k] = PARSER_UNKNOWN_VALUE; // Set to 1 for unknown words, as 1 is the reserved index for unknown words in the embedding table. Downstream code should handle this appropriately.
+                        }                                                
+#endif
+                        //pair->left_context_ids[CONTEXT_WINDOW_SIZE - 1 - k] = line->keys[j - k - 1];
                     }
                     else
                     {
-                        pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - k] = /*0*/ PAIRS_PADDING_KEY; // Set to 0 for padding, as 0 is a valid hash key index. Downstream code should handle this appropriately.
+                        pair->left_context_ids[CONTEXT_WINDOW_SIZE - 1 - k] = /*0*/ PAIRS_PADDING_KEY; // Set to 0 for padding, as 0 is a valid hash key index. Downstream code should handle this appropriately.
                                                                                   // This should not be hard coded to 0, but rather use a defined constant for padding, e.g., PAIRS_PADDING_KEY.
 
-                        //pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - k] = PAIRS_PADDING_KEY; // 0 is a valid hash key index
+                        //pair->left_context_ids[CONTEXT_WINDOW_SIZE - 1 - k] = PAIRS_PADDING_KEY; // 0 is a valid hash key index
                     }
                 }
 
@@ -372,13 +386,22 @@ class Pairs
                     if ((j + k + 1) < context->n)
                     {
                         size_t key = line->keys[j + k + 1];
-                        pair->right_context_keys[k] = hash_table[key]->get_word_id();
+                        size_t word_id = hash_table[key]->get_word_id(); // Translate hash key to compact word ID for training
+                        //pair->right_context_keys[k] = hash_table[key]->get_word_id();
 
                         //pair->right_context_keys[k] = line->keys[j + k + 1];
+#ifndef  MAX_VOCAB_SIZE 
+                        pair->right_context_keys[k] = word_id; // No MAX_VOCAB_SIZE check, just assign the word ID directly
+                        //pair->right_context_keys[k] = (word_id <= MAX_VOCAB_SIZE) ? word_id : PARSER_UNKNOWN_VALUE; // Set to 1 for unknown words, as 1 is the reserved index for unknown words in the embedding table. Downstream code should handle this appropriately.            
+#else
+                        pair->right_context_ids[k] = (word_id <= MAX_VOCAB_SIZE) ? word_id : PARSER_UNKNOWN_VALUE; // Set to 1 for unknown words, as 1 is the reserved index for unknown words in the embedding table. Downstream code should handle this appropriately.
+                        //pair->right_context_keys[k] = word_id; // No MAX_VOCAB_SIZE check, just assign the word ID directly
+#endif
+
                     }
                     else
                     {
-                        pair->right_context_keys[k] = /*0*/ PAIRS_PADDING_KEY; // Set to 0 for padding, as 0 is a valid hash key index. Downstream code should handle this appropriately.
+                        pair->right_context_ids[k] = /*0*/ PAIRS_PADDING_KEY; // Set to 0 for padding, as 0 is a valid hash key index. Downstream code should handle this appropriately.
                                                          // This should not be hard coded to 0, but rather use a defined constant for padding, e.g., PAIRS_PADDING_KEY.
 
                         //pair->right_context_keys[k] = PAIRS_PADDING_KEY; // 0 is a valid hash key index
@@ -531,15 +554,15 @@ class Pairs
                 
                 try
                 {
-                    pair->left_context_keys = new size_t[CONTEXT_WINDOW_SIZE];
-                    pair->right_context_keys = new size_t[CONTEXT_WINDOW_SIZE];
+                    pair->left_context_ids = new size_t[CONTEXT_WINDOW_SIZE];
+                    pair->right_context_ids = new size_t[CONTEXT_WINDOW_SIZE];
                 }
                 catch (const std::bad_alloc& e)
                 {
                     throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for left/right context arrays of single token.");
                 }
                 
-                pair->target_key = line->keys[j]; // Set the key for the target/center token
+                pair->target_id = line->keys[j]; // Set the key for the target/center token
 
                 /*for (size_t k = CONTEXT_WINDOW_SIZE - 1; k >= 0; k--)
                 {                    
@@ -580,11 +603,11 @@ class Pairs
                 {
                     if (k < j)
                     {
-                        pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - k] = line->keys[j - k - 1];
+                        pair->left_context_ids[CONTEXT_WINDOW_SIZE - 1 - k] = line->keys[j - k - 1];
                     }
                     else
                     {
-                        pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - k] = PAIRS_PADDING_KEY; // 0 is a valid hash key index
+                        pair->left_context_ids[CONTEXT_WINDOW_SIZE - 1 - k] = PAIRS_PADDING_KEY; // 0 is a valid hash key index
                     }
                 }
 
@@ -604,11 +627,11 @@ class Pairs
                 {
                     if ((j + k + 1) < context->n)
                     {
-                        pair->right_context_keys[k] = line->keys[j + k + 1];
+                        pair->right_context_ids[k] = line->keys[j + k + 1];
                     }
                     else
                     {
-                        pair->right_context_keys[k] = PAIRS_PADDING_KEY; // 0 is a valid hash key index
+                        pair->right_context_ids[k] = PAIRS_PADDING_KEY; // 0 is a valid hash key index
                     }
                 }
                 
@@ -689,8 +712,8 @@ class Pairs
 
                 try 
                 {
-                    pair->left_context_keys = new size_t[CONTEXT_WINDOW_SIZE]();
-                    pair->right_context_keys = new size_t[CONTEXT_WINDOW_SIZE]();
+                    pair->left_context_ids = new size_t[CONTEXT_WINDOW_SIZE]();
+                    pair->right_context_ids = new size_t[CONTEXT_WINDOW_SIZE]();
                 }
                 catch (const std::bad_alloc& e)
                 {
@@ -699,7 +722,7 @@ class Pairs
 
                 contexts[i]->pairs[j] = pair; // Store the pointer to the pair in the array of pairs
 
-                pair->target_key = line->keys[j]; // Set target key in pair     
+                pair->target_id = line->keys[j]; // Set target key in pair     
                 
                 // Left context keys
                 for (size_t k = CONTEXT_WINDOW_SIZE - 1; k >= 0 && j > 0; k--)
@@ -746,18 +769,18 @@ class Pairs
             while (tokens_tail != nullptr)
             {
                 struct ContextPair* pair = new ContextPair();
-                pair->left_context_keys = new size_t[CONTEXT_WINDOW_SIZE]();
-                pair->right_context_keys = new size_t[CONTEXT_WINDOW_SIZE]();
+                pair->left_context_ids = new size_t[CONTEXT_WINDOW_SIZE]();
+                pair->right_context_ids = new size_t[CONTEXT_WINDOW_SIZE]();
 
                 context_pairs->pairs[i] = pair;
 
                 TOKEN_NEW* target_token = tokens_tail;
 
-                pair->target_key = target_token->key; // Set target key in pair
+                pair->target_id = target_token->key; // Set target key in pair
  
                 for (size_t j = 0; j < CONTEXT_WINDOW_SIZE && target_token->prev != nullptr; j++)
                 {
-                    pair->left_context_keys[CONTEXT_WINDOW_SIZE - 1 - j] = target_token->prev->key;
+                    pair->left_context_ids[CONTEXT_WINDOW_SIZE - 1 - j] = target_token->prev->key;
                     target_token = target_token->prev;
                 }
 
@@ -769,7 +792,7 @@ class Pairs
                 // Move to right
                 for (size_t j = 0; j < CONTEXT_WINDOW_SIZE && target_token->next != nullptr; j++)
                 {
-                    pair->right_context_keys[j] = target_token->next->key;
+                    pair->right_context_ids[j] = target_token->next->key;
                     target_token = target_token->next;
                 }
                             

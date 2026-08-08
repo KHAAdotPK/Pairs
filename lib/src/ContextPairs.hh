@@ -12,11 +12,13 @@
 
 struct ContextPair
 {
-    size_t* left_context_keys; // Array of keys for the left context tokens
-    size_t* right_context_keys; // Array of keys for the right context tokens
-    size_t  target_key;        // Key for the target/center token
+    // All names ending on keys, should end at ids
 
-    ContextPair() : left_context_keys{nullptr}, right_context_keys{nullptr}, target_key{0}
+    size_t* left_context_ids; // Array of ids for the left context tokens, these are displacement into index table
+    size_t* right_context_ids; // Array of ids for the right context tokens, these are displacement into index table
+    size_t  target_id;        // Id for the target/center token
+
+    ContextPair() : left_context_ids{nullptr}, right_context_ids{nullptr}, target_id{0}
     {
     }
 };

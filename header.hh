@@ -41,8 +41,13 @@
  * - On the GPU, Word ID `0` is mapped to a zero-vectored embedding row, 
  *   allowing branchless embedding lookups without warp divergence.
  */
-#ifndef PAIRS_PADDING_KEY
-#define PAIRS_PADDING_KEY 0
+#ifdef PARSER_PADDING_VALUE
+#define PAIRS_PADDING_KEY PARSER_PADDING_VALUE // Use the same padding value as defined in Parser/header.hh
+#else
+#define PAIRS_PADDING_KEY 0 // Fallback to 0 if PARSER_PADDING_VALUE is not defined
+                            // In both cases, this is the index into the embedding table.
+                            // This slot of the embedding table is initialized to all zeros and remains zero throughout training.
+                            
 /*
     This macro is intentionally left commented out because the current
     implementation uses compact word IDs for the left/right context arrays.
