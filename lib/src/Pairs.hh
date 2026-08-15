@@ -71,11 +71,11 @@ class Pairs
      * @throws std::runtime_error If the file cannot be opened, the in-memory
      *         structure is incomplete, or the stream fails while writing.
      */
-    void save_pairs(ContextPairs const * const * contexts, Parser const& parser, const std::string& ofile_name)
+    void save_pairs(const ContextPairs* const* contexts, const Parser& parser, const std::string& ofile_name)
     {
         if (contexts == nullptr && parser.get_nol() != 0)
         {
-            throw std::runtime_error("Pairs::save_pairs Error: contexts pointer is null while parser reports non-zero line count");
+            throw std::runtime_error("Pairs::save_pairs(const ContextPairs* const*, const Parser&, const std::string&) Error: contexts pointer is null while parser reports non-zero line count");
         }
 
         const size_t expected_nol = parser.get_nol();
@@ -97,7 +97,7 @@ class Pairs
         {
             if (contexts[i] == nullptr)
             {
-                throw std::runtime_error(std::string("Pairs::save_pairs Error: null ContextPairs at contexts[") + std::to_string(i) + "]");
+                throw std::runtime_error(std::string("Pairs::save_pairs(const ContextPairs* const*, const Parser&, const std::string&) Error: null ContextPairs at contexts[") + std::to_string(i) + "]");
             }
 
             // Write number of pairs for the line before serializing them.
@@ -109,17 +109,17 @@ class Pairs
                 const ContextPair* pair = contexts[i]->pairs[j];
                 if (pair == nullptr)
                 {
-                    throw std::runtime_error(std::string("Pairs::save_pairs Error: null ContextPair at contexts[") + std::to_string(i) + "]->pairs[" + std::to_string(j) + "]");
+                    throw std::runtime_error(std::string("Pairs::save_pairs(const ContextPairs* const*, const Parser&, const std::string&) Error: null ContextPair at contexts[") + std::to_string(i) + "]->pairs[" + std::to_string(j) + "]");
                 }
 
                 if (pair->left_context_ids == nullptr)
                 {
-                    throw std::runtime_error(std::string("Pairs::save_pairs Error: null left_context_ids at contexts[") + std::to_string(i) + "]->pairs[" + std::to_string(j) + "]");
+                    throw std::runtime_error(std::string("Pairs::save_pairs(const ContextPairs* const*, const Parser&, const std::string&) Error: null left_context_ids at contexts[") + std::to_string(i) + "]->pairs[" + std::to_string(j) + "]");
                 }
 
                 if (pair->right_context_ids == nullptr)
                 {
-                    throw std::runtime_error(std::string("Pairs::save_pairs Error: null right_context_ids at contexts[") + std::to_string(i) + "]->pairs[" + std::to_string(j) + "]");
+                    throw std::runtime_error(std::string("Pairs::save_pairs(const ContextPairs* const*, const Parser&, const std::string&) Error: null right_context_ids at contexts[") + std::to_string(i) + "]->pairs[" + std::to_string(j) + "]");
                 }
 
                 ofile.write(reinterpret_cast<const char*>(&pair->target_id), sizeof(size_t));
@@ -130,13 +130,13 @@ class Pairs
 
         if (!ofile)
         {
-            throw std::runtime_error("Pairs::save_pairs Error: write operation failed before completion");
+            throw std::runtime_error("Pairs::save_pairs(const ContextPairs* const*, const Parser&, const std::string&) Error: write operation failed before completion");
         }
 
         ofile.flush();
         if (!ofile)
         {
-            throw std::runtime_error("Pairs::save_pairs Error: flush failed after writing pairs data");
+            throw std::runtime_error("Pairs::save_pairs(const ContextPairs* const*, const Parser&, const std::string&) Error: flush failed after writing pairs data");
         }
 
         ofile.close();
@@ -169,29 +169,29 @@ class Pairs
         std::ifstream ifile(ifile_name, std::ios::in | std::ios::binary);
         if (!ifile.is_open())
         {
-            throw std::runtime_error("Pairs::read_pairs_from_file(Parser&, const std::string&) Error: failed to open file for reading");
+            throw std::runtime_error("Pairs::load_pairs(const std::string&) Error: failed to open file for reading");
         }
 
         PAIRS_FILE_HEADER header = {0, 0};
 
         if (!ifile.read(reinterpret_cast<char*>(&header.nol), sizeof(header.nol)))
         {
-            throw std::runtime_error("Pairs::load_pairs Error: failed to read file header (nol)");
+            throw std::runtime_error("Pairs::load_pairs(const std::string&) Error: failed to read file header (nol)");
         }
 
         if (!ifile.read(reinterpret_cast<char*>(&header.cws), sizeof(header.cws)))
         {
-            throw std::runtime_error("Pairs::load_pairs Error: failed to read file header (cws)");
+            throw std::runtime_error("Pairs::load_pairs(const std::string&) Error: failed to read file header (cws)");
         }
 
         if (header.nol == 0 && header.cws == 0)
         {
-            throw std::runtime_error("Pairs::load_pairs Error: invalid empty file header");
+            throw std::runtime_error("Pairs::load_pairs(const std::string&) Error: invalid empty file header");
         }
 
         if (header.cws != CONTEXT_WINDOW_SIZE)
         {
-            throw std::runtime_error(std::string("Pairs::load_pairs Error: saved context window size mismatch: file cws=") + std::to_string(header.cws) + ", expected cws=" + std::to_string(CONTEXT_WINDOW_SIZE));
+            throw std::runtime_error(std::string("Pairs::load_pairs(const std::string&) Error: saved context window size mismatch: file cws=") + std::to_string(header.cws) + ", expected cws=" + std::to_string(CONTEXT_WINDOW_SIZE));
         }
 
         ContextPairs** contexts = nullptr;
@@ -206,7 +206,7 @@ class Pairs
 
                 if (!ifile.read(reinterpret_cast<char*>(&context->n), sizeof(context->n)))
                 {
-                    throw std::runtime_error(std::string("Pairs::load_pairs Error: failed to read line pair count at index ") + std::to_string(i));
+                    throw std::runtime_error(std::string("Pairs::load_pairs(const std::string&) Error: failed to read line pair count at index ") + std::to_string(i));
                 }
 
                 context->pairs = nullptr;
@@ -224,7 +224,7 @@ class Pairs
                             delete pair->left_context_ids;
                             delete pair->right_context_ids;
                             delete pair;
-                            throw std::runtime_error(std::string("Pairs::load_pairs Error: failed to read target_id at line ") + std::to_string(i) + ", pair " + std::to_string(j));
+                            throw std::runtime_error(std::string("Pairs::load_pairs(const std::string&) Error: failed to read target_id at line ") + std::to_string(i) + ", pair " + std::to_string(j));
                         }
 
                         if (!ifile.read(reinterpret_cast<char*>(pair->left_context_ids), sizeof(size_t) * header.cws))
@@ -232,7 +232,7 @@ class Pairs
                             delete pair->left_context_ids;
                             delete pair->right_context_ids;
                             delete pair;
-                            throw std::runtime_error(std::string("Pairs::load_pairs Error: failed to read left context at line ") + std::to_string(i) + ", pair " + std::to_string(j));
+                            throw std::runtime_error(std::string("Pairs::load_pairs(const std::string&) Error: failed to read left context at line ") + std::to_string(i) + ", pair " + std::to_string(j));
                         }
 
                         if (!ifile.read(reinterpret_cast<char*>(pair->right_context_ids), sizeof(size_t) * header.cws))
@@ -240,7 +240,7 @@ class Pairs
                             delete pair->left_context_ids;
                             delete pair->right_context_ids;
                             delete pair;
-                            throw std::runtime_error(std::string("Pairs::load_pairs Error: failed to read right context at line ") + std::to_string(i) + ", pair " + std::to_string(j));
+                            throw std::runtime_error(std::string("Pairs::load_pairs(const std::string&) Error: failed to read right context at line ") + std::to_string(i) + ", pair " + std::to_string(j));
                         }
 
                         context->pairs[j] = pair;
