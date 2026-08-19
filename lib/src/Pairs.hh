@@ -164,7 +164,7 @@ class Pairs
      *         invalid, the context window does not match the current build, or a
      *         record is truncated or malformed.
      */
-    ContextPairs** load_pairs(const std::string& ifile_name)
+    ContextPairs** load_pairs(const std::string& ifile_name) const
     {
         std::ifstream ifile(ifile_name, std::ios::in | std::ios::binary);
         if (!ifile.is_open())
@@ -281,6 +281,210 @@ class Pairs
         }
 
         return contexts;
+    }
+    
+    /**
+     * Load a serialized context-pair table from a binary file.
+     *
+     * The method reads the PAIRS_FILE_HEADER and then reconstructs the
+     * ContextPairs table one corpus line at a time. Each line contains its
+     * number of context pairs, and each pair contains a target ID together
+     * with its left- and right-context ID arrays.
+     *
+     * On success, the method stores the newly allocated table in
+     * `*contexts` and transfers ownership of the table and all nested objects
+     * to the caller. The caller is responsible for releasing the outer
+     * ContextPairs array, each ContextPairs object, each ContextPair array,
+     * every ContextPair object, and its context ID arrays.
+     *
+     * The output pointer is initialized to nullptr before loading begins.
+     * If the file cannot be opened or read, or if memory allocation fails,
+     * the method throws std::runtime_error. The caller must provide a valid
+     * non-null `contexts` pointer.
+     *
+     * @param contexts Output pointer that receives the allocated ContextPairs
+     *                 table. Must not be nullptr.
+     * @param ifile_name Path to the binary pair-table file.
+     * @return The PAIRS_FILE_HEADER read from the file.
+     * @throws std::runtime_error If the file cannot be opened or read, or if
+     *         memory allocation fails.
+     */
+    static PAIRS_FILE_HEADER load_pairs_table(ContextPairs*** contexts, const std::string& ifile_name) 
+    {
+        std::ifstream ifile(ifile_name, std::ios::in | std::ios::binary);
+        if (!ifile.is_open())
+        {
+            throw std::runtime_error("Pairs::load_pairs_table(ContextPairs***, const std::string&) Error: failed to open file for reading");
+        }
+
+        PAIRS_FILE_HEADER header = {0, 0};
+
+        // Blindly assigning nullptr
+        *contexts = nullptr;
+
+        if (!ifile.read(reinterpret_cast<char*>(&header), sizeof(header)))
+        {
+            ifile.close();
+
+            throw std::runtime_error("Pairs::load_pairs_table(ContextPairs***, const std::string&) Error: failed to read file header of file " + ifile_name);
+        }
+
+        if (header.nol != 0)
+        {
+            // The trailing parentheses () will initialize every pointer in the allocated array to nullptr
+            *contexts = new (std::nothrow) ContextPairs*[header.nol]();
+        }
+        // if header.nol == 0, contexts[0] (showing off) will remain nullptr
+
+        if (*contexts == nullptr)
+        {
+            throw std::runtime_error("Pairs::load_pairs_table(ContextPairs***, const std::string&) Error: allocation failed for ContextPairs array of size " + std::to_string(header.nol) + " for file " + ifile_name);
+        }
+
+        for (size_t i = 0; i < header.nol; i++)
+        {
+            // All properties are initialized with default values, look at the definition of the default constructor
+            (*contexts)[i] = new (std::nothrow) ContextPairs();
+
+            // Check if (*contexts)[i] is still nullptr. If it is garbage collect all previously allocated memory
+            if (*(*contexts + i) == nullptr) // contexts[0][i], showing off 
+            {
+                for (size_t j = 0; j < i; j++)
+                {
+                    delete (*contexts)[j];
+                }
+
+                delete[] (*contexts);
+                *contexts = nullptr;
+
+                throw std::runtime_error("Pairs::load_pairs_table(ContextPairs***, const std::string&) Error: allocation failed for ContextPairs array of size " + std::to_string(header.nol) + " for file " + ifile_name);
+            }
+
+            if (!ifile.read(reinterpret_cast<char*>(&(*contexts)[i]->n), sizeof(*contexts)[i]->n))
+            {
+                ifile.close();
+
+                // Also garbage collect all the previously allocated memory
+
+                throw std::runtime_error("Pairs::load_pairs_table(ContextPairs***, const std::string&) Error: failed to read line pair count at index" + std::to_string(i));
+            }
+            
+            try
+            {
+                (*contexts)[i]->pairs = new ContextPair*[(*contexts)[i]->n]();
+            }
+            catch (std::bad_alloc& e)
+            {
+                ifile.close();
+
+                // Also garbage collect all the previously allocated memory
+
+                throw std::runtime_error("Pairs::load_pairs_table(ContextPairs***, const std::string&) Error: failed to allocate memory for " + std::to_string((*contexts)[i]->n) + " pairs of contexts at line number " + std::to_string(i) + "with exception " + e.what());    
+            }  
+            
+            /*if ((*contexts)[i]->pairs == nullptr)
+            {
+                ifile.close();
+
+                // Also garbage collect all the previously allocated memory
+
+                throw std::runtime_error("Pairs::load_pairs_table(ContextPairs***, const std::string&) Error: failed to allocate memory for " + std::to_string((*contexts)[i]->n) + " pairs of contexts at line number " + std::to_string(i));    
+            }*/
+
+            for (size_t j = 0; j < (*contexts)[i]->n; j++)
+            {
+                ContextPair* pair = nullptr;
+
+                try
+                {
+                    pair = new ContextPair();
+                }
+                catch (std::bad_alloc& e)
+                {
+                    ifile.close();
+
+                    // Also garbage collect all the previously allocated memory
+
+                    throw std::runtime_error("Pairs::load_pairs_table(ContextPairs***, const std::string&) Error: failed to allocate memory for a single context pair at line number " + std::to_string(i) + "with exception " + e.what());    
+                }
+
+                try
+                {
+                    pair->left_context_ids = new size_t[header.cws]();                    
+                }
+                catch (std::bad_alloc& e)
+                {
+                    ifile.close();
+
+                    // Also garbage collect all the previously allocated memory
+                    // Partially doing it, remember to grabage collect every thing
+                    delete pair;
+
+                    throw std::runtime_error("Pairs::load_pairs_table(ContextPairs***, const std::string&) Error: failed to allocate memory for " + std::to_string((*contexts)[i]->n) + " pairs of contexts at line number " + std::to_string(i) + "with exception " + e.what());    
+                }
+
+                try
+                {
+                    pair->right_context_ids = new size_t[header.cws]();   
+                }
+                catch (std::bad_alloc& e)
+                {
+                    ifile.close();
+                    
+                    // Also garbage collect all the previously allocated memory
+                    // Partially doing it, remember to grabage collect every thing
+                    delete[] pair->left_context_ids;
+                    delete pair;
+
+                    throw std::runtime_error("Pairs::load_pairs_table(ContextPairs***, const std::string&) Error: failed to allocate memory for " + std::to_string((*contexts)[i]->n) + " pairs of contexts at line number " + std::to_string(i) + "with exception " + e.what());    
+                }
+
+                if (!ifile.read(reinterpret_cast<char*>(&pair->target_id), sizeof(pair->target_id)))
+                {
+                    ifile.close();
+
+                    // Also garbage collect all the previously allocated memory
+                    // Partially doing it, remember to grabage collect every thing
+                    delete[] pair->right_context_ids;
+                    delete[] pair->left_context_ids;
+                    delete pair;
+                    
+                    throw std::runtime_error(std::string("Pairs::load_pairs(const std::string&) Error: failed to read target_id at line ") + std::to_string(i) + ", pair " + std::to_string(j));
+                }
+
+                if (!ifile.read(reinterpret_cast<char*>(pair->left_context_ids), sizeof(size_t) * header.cws))
+                {
+                    ifile.close();
+
+                    // Also garbage collect all the previously allocated memory
+                    // Partially doing it, remember to grabage collect every thing
+                    delete[] pair->right_context_ids;
+                    delete[] pair->left_context_ids;
+                    delete pair;
+                    
+                    throw std::runtime_error(std::string("Pairs::load_pairs(const std::string&) Error: failed to read left context at line ") + std::to_string(i) + ", pair " + std::to_string(j));
+                }
+
+                if (!ifile.read(reinterpret_cast<char*>(pair->right_context_ids), sizeof(size_t) * header.cws))
+                {
+                    ifile.close();
+
+                    // Also garbage collect all the previously allocated memory
+                    // Partially doing it, remember to grabage collect every thing
+                    delete[] pair->right_context_ids;
+                    delete[] pair->left_context_ids;
+                    delete pair;
+                    
+                    throw std::runtime_error(std::string("Pairs::load_pairs(const std::string&) Error: failed to read right context at line ") + std::to_string(i) + ", pair " + std::to_string(j));
+                }
+
+                (*contexts)[i]->pairs[j] = pair;
+            }
+        }
+        
+        ifile.close(); 
+
+        return header;
     }
 
     /*
