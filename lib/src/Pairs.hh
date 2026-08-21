@@ -608,40 +608,35 @@ class Pairs
      * PADDING & CONTEXT HANDLING DESIGN
      * =========================================================================
      *
-     * 1. THE HASH KEY INDEX PROBLEM & PAIRS_PADDING_KEY:
+     * 1. THE HASH KEY INDEX PROBLEM & PAD SENTINEL:
      *    During parsing, tokens are hashed into a vocabulary hash table of size
      *    `bucket_count`. A token's hash index (key) is generated using modulo
-     *    arithmetic, which means '0' is a completely valid and occupied index in
-     *    the hash table.
-     *    Consequently, we CANNOT use '0' to denote out-of-bounds/padding slots for
-     *    context words at the beginning or end of lines. Doing so would conflate
-     *    padding with whatever vocabulary word happens to hash to index 0.
+     *    arithmetic, which means `0` is a valid occupied bucket index in the hash
+     *    table. Therefore, `0` cannot be used as a generic padding sentinel for the
+     *    context arrays without colliding with real vocabulary entries.
      *
-     *    To solve this, we pad out-of-bounds context slots with `PAIRS_PADDING_KEY`
-     *    which is defined as `((size_t)-1)` (the maximum value of `size_t`). This is
-     *    guaranteed to never conflict with any valid hash table index.
+     *    In the current implementation, padding is represented by `PARSER_PADDING_VALUE`
+     *    (default: `0`) at the context-array layer, while the real vocabulary IDs are
+     *    offset by `TOKEN_ID_ORIGINATE_AT_VALUE` (default: `5`) in the parser.
      *
      * 2. THE TRANSLATION LAYER (HASH INDEX -> WORD ID):
-     *    Downstream training loops (especially on the GPU/CUDA) require contiguous,
-     *    compact token identifiers (Word IDs) ranging from 1 to V (vocabulary size)
-     *    rather than sparse, scattered hash indices.
+     *    The parser stores compact vocabulary IDs in the active range
+     *    [TOKEN_ID_ORIGINATE_AT_VALUE, TOKEN_ID_ORIGINATE_AT_VALUE + bucket_used).
+     *    These are not raw hash indices and are not necessarily contiguous from 0 or 1.
      *
-     *    Therefore, before training, these pairs undergo a translation phase where:
-     *      - Any valid hash index is mapped to its unique 1-based `word_id`
-     *        (via `WordRecord->get_word_id()`).
-     *      - The `PAIRS_PADDING_KEY` sentinel is safely mapped to `0`.
+     *    Therefore, before training, these pairs are consumed in a translation phase
+     *    where valid hash-key lookups produce the parser's compact `word_id` via
+     *    `WordRecord->get_word_id()`. The reserved padding slot remains `PARSER_PADDING_VALUE`.
      *
-     * 3. WHY WORD ID ORIGINS AT 1 & GPU EMBEDDING ZERO-PADDING:
-     *    Because `word_id`s originate at 1 (using `TOKEN_ID_ORIGINATE_AT_VALUE = 1`),
-     *    index `0` is completely free to serve as the official padding token ID.
+     * 3. WHY THE OFFSETS EXIST & GPU ZERO-PADDING:
+     *    The active vocabulary starts at `TOKEN_ID_ORIGINATE_AT_VALUE` rather than at 0.
+     *    This keeps the special sentinel range (0..TOKEN_ID_ORIGINATE_AT_VALUE-1) free
+     *    for padding / unknown / control tokens.
      *
-     *    In GPU embedding layers, index `0` is assigned a "0-vectored" embedding row
-     *    (all weights in this embedding row are initialized and kept at 0.0).
-     *    This allows the GPU to run branchless lookups: we don't need conditional
-     *    branching (`if (id != pad)`) to mask out padding tokens. The GPU can blindly
-     *    fetch and accumulate embedding vectors for all tokens (including padding),
-     *    and the zero-vector at index 0 will naturally add nothing to the projection,
-     *    avoiding warp divergence and ensuring optimal execution speed.
+     *    In GPU embedding layers, index `0` is still treated as the zero-vector row,
+     *    which is useful for padding. The parser stores actual vocabulary entries above
+     *    this offset, so the embedding lookup layer can map the parser's compact IDs to
+     *    the appropriate training indices without conflating them with padding.
      *
      * This overload uses the supplied vocabulary hash table to resolve each token's
      * hash key into a compact word ID before filling the left/right context arrays.
@@ -881,40 +876,33 @@ class Pairs
      * PADDING & CONTEXT HANDLING DESIGN
      * =========================================================================
      * 
-     * 1. THE HASH KEY INDEX PROBLEM & PAIRS_PADDING_KEY:
-     *    During parsing, tokens are hashed into a vocabulary hash table of size 
-     *    `bucket_count`. A token's hash index (key) is generated using modulo 
-     *    arithmetic, which means '0' is a completely valid and occupied index in 
-     *    the hash table. 
-     *    Consequently, we CANNOT use '0' to denote out-of-bounds/padding slots for 
-     *    context words at the beginning or end of lines. Doing so would conflate 
-     *    padding with whatever vocabulary word happens to hash to index 0.
-     *    
-     *    To solve this, we pad out-of-bounds context slots with `PAIRS_PADDING_KEY` 
-     *    which is defined as `((size_t)-1)` (the maximum value of `size_t`). This is 
-     *    guaranteed to never conflict with any valid hash table index.
-     * 
-     * 2. THE TRANSLATION LAYER (HASH INDEX -> WORD ID):
-     *    Downstream training loops (especially on the GPU/CUDA) require contiguous, 
-     *    compact token identifiers (Word IDs) ranging from 1 to V (vocabulary size) 
-     *    rather than sparse, scattered hash indices.
-     *    
-     *    Therefore, before training, these pairs undergo a translation phase where:
-     *      - Any valid hash index is mapped to its unique 1-based `word_id` 
-     *        (via `WordRecord->get_word_id()`).
-     *      - The `PAIRS_PADDING_KEY` sentinel is safely mapped to `0`.
-     * 
-     * 3. WHY WORD ID ORIGINS AT 1 & GPU EMBEDDING ZERO-PADDING:
-     *    Because `word_id`s originate at 1 (using `TOKEN_ID_ORIGINATE_AT_VALUE = 1`), 
-     *    index `0` is completely free to serve as the official padding token ID.
-     *    
-     *    In GPU embedding layers, index `0` is assigned a "0-vectored" embedding row 
-     *    (all weights in this embedding row are initialized and kept at 0.0). 
-     *    This allows the GPU to run branchless lookups: we don't need conditional 
-     *    branching (`if (id != pad)`) to mask out padding tokens. The GPU can blindly 
-     *    fetch and accumulate embedding vectors for all tokens (including padding), 
-     *    and the zero-vector at index 0 will naturally add nothing to the projection, 
-     *    avoiding warp divergence and ensuring optimal execution speed.
+     * 1. HASH-KEY SPACE VS. ACTIVE VOCABULARY RANGE:
+     *    During parsing, tokens are hashed into a vocabulary hash table of size
+     *    `bucket_count`. A token's hash index (key) is generated using modulo
+     *    arithmetic, so `0` is a valid occupied bucket index in the hash table.
+     *    Consequently, raw hash keys and actual vocabulary IDs are not the same thing.
+     *
+     *    The parser's active vocabulary occupies the range
+     *    [TOKEN_ID_ORIGINATE_AT_VALUE, TOKEN_ID_ORIGINATE_AT_VALUE + bucket_used),
+     *    while reserved sentinel positions remain below that offset.
+     *
+     * 2. TRANSLATION LAYER (HASH KEY -> WORD ID):
+     *    The real vocabulary IDs used downstream come from `WordRecord->get_word_id()`.
+     *    These IDs are not raw hash indices and are not required to start at 0 or 1.
+     *    They are compact IDs in the parser's offset-based namespace.
+     *
+     *    Padding remains `PARSER_PADDING_VALUE` (default `0`) at the context-array layer,
+     *    and the active vocabulary is offset above that reserved range.
+     *
+     * 3. WHY THE OFFSET EXISTS & GPU ZERO-PADDING:
+     *    `TOKEN_ID_ORIGINATE_AT_VALUE` reserves the special range below the first real
+     *    vocabulary ID. This prevents collisions with padding, [UNK], [CLS], [SEP],
+     *    and [MASK] sentinel slots.
+     *
+     *    In GPU embedding layers, index `0` is still used as the zero-vector row for
+     *    padding. The parser's real vocabulary IDs are stored above that offset, so the
+     *    embedding lookup can preserve a clean reserved padding slot without conflating
+     *    it with actual vocabulary entries.
      * 
      * @param parser Reference to the Parser object.
      * @param lines_array Contiguous array of WORDS pointers containing line token keys.

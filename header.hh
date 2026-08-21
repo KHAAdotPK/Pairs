@@ -34,12 +34,15 @@
  *   with whatever word happens to hash to index 0.
  * 
  * DOWNSTREAM TRANSLATION LAYER:
- * - Before these pairs are used in model training, a translation step must 
- *   convert hash keys to continuous, 1-based Word IDs (1 to V).
- * - Since Word IDs are 1-based (i.e., starting from 1), Word ID `0` is free.
- * - The translation layer maps `PAIRS_PADDING_KEY` to Word ID `0`.
- * - On the GPU, Word ID `0` is mapped to a zero-vectored embedding row, 
- *   allowing branchless embedding lookups without warp divergence.
+ * - Before these pairs are used in model training, a translation step must
+ *   map hash keys to the parser's active vocabulary ID space, whose first valid
+ *   entry is `TOKEN_ID_ORIGINATE_AT_VALUE` (default: 5), not 1.
+ * - The reserved padding/sentinel slot remains `PARSER_PADDING_VALUE` (default: 0),
+ *   and that value is translated to the zero-vectored embedding row downstream.
+ * - The active vocabulary IDs occupy the range
+ *     [TOKEN_ID_ORIGINATE_AT_VALUE, TOKEN_ID_ORIGINATE_AT_VALUE + bucket_used).
+ * - On the GPU, the zero embedding row is still used for padding, but the parser's
+ *   real vocabulary IDs are offset by `TOKEN_ID_ORIGINATE_AT_VALUE`.
  */
 #ifdef PARSER_PADDING_VALUE
 #define PAIRS_PADDING_KEY PARSER_PADDING_VALUE // Use the same padding value as defined in Parser/header.hh
