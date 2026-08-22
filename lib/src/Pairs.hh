@@ -485,6 +485,11 @@ class Pairs
 
                 (*contexts)[i]->pairs[j] = pair;
             }
+            
+            if (i % CORPUS_SERIALIZATION_CHECKPOINT_INTERVAL == 0)
+            {
+                std::cout<< ".";
+            }
         }
         
         ifile.close(); 
