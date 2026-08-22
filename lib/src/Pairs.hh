@@ -126,6 +126,11 @@ class Pairs
                 ofile.write(reinterpret_cast<const char*>(pair->left_context_ids), sizeof(size_t) * expected_cws);
                 ofile.write(reinterpret_cast<const char*>(pair->right_context_ids), sizeof(size_t) * expected_cws);
             }
+
+            if (i % CORPUS_SERIALIZATION_CHECKPOINT_INTERVAL == 0)
+            {
+                std::cout<< ".";
+            }
         }
 
         if (!ofile)
@@ -858,7 +863,12 @@ class Pairs
                     }
 
                     k--;
-                }*/
+                }*/                
+            }
+
+            if (i % CORPUS_SERIALIZATION_CHECKPOINT_INTERVAL == 0)
+            {
+                std::cout<< ".";
             }
         }
 
