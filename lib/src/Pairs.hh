@@ -674,7 +674,7 @@ class Pairs
         }
         catch (const std::bad_alloc& e)
         {
-            throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for contexts.");
+            throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**, WordRecord_new**) Error: failed to allocate memory for contexts.");
         }
         
         for (size_t i = 0; i < parser.get_nol(); i++)
@@ -705,7 +705,7 @@ class Pairs
             }
             catch (const std::bad_alloc& e)
             {
-                throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for context_pairs array of single line.");
+                throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**, WordRecord_new**) Error: failed to allocate memory for context_pairs array of single line.");
             }
             
             // Add the context of single line to the array of contexts
@@ -726,7 +726,7 @@ class Pairs
                 }
                 catch (const std::bad_alloc& e)
                 {
-                    throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for context pair of single token.");
+                    throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**, WordRecord_new**) Error: failed to allocate memory for context pair of single token.");
                 }
                 
                 try
@@ -736,7 +736,7 @@ class Pairs
                 }
                 catch (const std::bad_alloc& e)
                 {
-                    throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**) Error: failed to allocate memory for left/right context arrays of single token.");
+                    throw std::runtime_error("Pairs::build_pairs((Parser&, WORDS**, WordRecord_new**) Error: failed to allocate memory for left/right context arrays of single token.");
                 }
                 
                 //pair->target_key = line->keys[j]; // Set the key for the target/center token
