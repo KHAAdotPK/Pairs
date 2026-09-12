@@ -659,7 +659,7 @@ class Pairs
      * @param hash_table Vocabulary hash table used to resolve hash keys into word IDs.
      * @return Array of pointers to ContextPairs for each line.
      */
-    ContextPairs** build_pairs(Parser& parser, WORDS** lines_array, WordRecord_new** hash_table)
+    ContextPairs** build_pairs(Parser& parser, WORDS** lines_array, WordRecord_new_version_1** hash_table)
     {
 
         /*
